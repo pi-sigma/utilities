@@ -17,7 +17,7 @@ Options:
     -c, --clear     Clear Django options from previous run
 
 Arguments:
-    [method/class]    Method should follow <test_foo_bar>. Class should be 
+    [method/class]    Method should follow <test_foo_bar>. Class should be
                       <FooBarTest> or <FooBarTests>, although <TestFooBar> and
                       <TestsFooBar> are supported as well
     [Django options]  --keepd etc. are passed along to the Django test runner
@@ -34,8 +34,13 @@ the -c flag in addition. For example,
     . djtest.sh -r -c --verbosity=2
 
 will run the previous test with --verbosity=2 and create a new database, even if the
-last run was made with --keepdb.\n"
+last run was made with --keepdb.
+"
 
+
+get_first_arg() {
+  echo "$1" | cut -d' ' -f1
+}
 
 #===FUNCTION====================================================================
 # Handle options and arguments
@@ -65,23 +70,18 @@ handle_options() {
 }
 
 #===FUNCTION====================================================================
-get_first_arg() {
-  echo $1 | cut -d' ' -f1
-}
-
-#===FUNCTION====================================================================
 # Get file paths
 # Globals:
 #   None
 # Arguments:
-#   method    (string)
+#   method  (string)
 # Outputs:
 #   file_paths
 # Details:
 #   Retrieve all paths of files where method name is found
 #===============================================================================
 get_file_paths() {
-  local method=$@
+  local method=$*
   local file_paths
 
   IFS=$'\n' file_paths=$(rg -w "$method" | rg -o '^[^:]+' | uniq)
@@ -104,7 +104,7 @@ show_file_paths() {
   echo $'The name of the test method/class was found in multiple files:\n'
 
   ITER=1
-  for elem in $@; do  
+  for elem in "$@"; do
     echo "(${ITER}) ${elem}"
     ((ITER++))
   done
@@ -131,13 +131,13 @@ get_class_names() {
   local class_def
   local class_name
 
-  start_lines=($(tac "$file_path" | rg -w -n $method | cut -f1 -d:))
+  start_lines=("$(tac "$file_path" | rg -w -n "$method" | cut -f1 -d:)")
 
   for start_line in ${start_lines[@]}; do
-    class_def=$(tac "$file_path" | sed -n ''$start_line',$p' | rg -w -m 1 class)
+    class_def=$(tac "$file_path" | sed -n ''"$start_line"',$p' | rg -w -m 1 "^class [a-zA-Z]+")
     class_name="${class_def%%(*}"
     class_name="${class_name:6}"
-    echo $class_name
+    echo "$class_name"
   done
 }
 
@@ -147,12 +147,12 @@ get_class_names() {
 #   None
 # Arguments:
 #   class names (array)
-#   file_path (string)
+#   file_path   (string)
 # Details:
 #   Displays names of classes in which test is found
 #===============================================================================
 show_class_names() {
-  local class_names="${@:1:$# - 1}"
+  local class_names=( "${@:1:$# - 1}" )
   local file_path="${!#}"
   local elem
   local ITER
@@ -160,7 +160,7 @@ show_class_names() {
   echo $'The test method was found in multiple classes:\n'
 
   ITER=1
-  for elem in $class_names; do  
+  for elem in "${class_names[@]}"; do
     echo "(${ITER}) $file_path: ${elem}"
     ((ITER++))
   done
@@ -171,9 +171,9 @@ show_class_names() {
 # Globals:
 #   None
 # Arguments:
-#   file_path
-#   class_name (optional)
-#   method (optional)
+#   file_path   (string)
+#   class_name  (string, optional)
+#   method      (string, optional)
 # Returns:
 #   a dotted path (foo.bar.BazTest.test_example)
 # Details:
@@ -192,18 +192,18 @@ make_dotted_path() {
   fi
 
   dotted_path=${path//\//.}
-  [ $2 ] && dotted_path+=".$2"
-  [ $3 ] && dotted_path+=".$3"
-  echo $dotted_path
+  [ "$2" ] && dotted_path+=".$2"
+  [ "$3" ] && dotted_path+=".$3"
+  echo "$dotted_path"
 }
 
 #===FUNCTION====================================================================
 # Run test
 # Globals:
-#   previous_django_test
-#   django_test_options
+#   previous_django_test    (string)
+#   django_test_options     (string)
 # Arguments:
-#   dotted_path
+#   dotted_path (string)
 # Outputs:
 #   Writes dotted_path to stdout
 # Details:
@@ -212,14 +212,16 @@ make_dotted_path() {
 #===============================================================================
 run_test() {
   previous_django_test="python manage.py test $1"
-  [ $1 != "" ] && eval "${previous_django_test}" "${django_test_options}"  && echo ">>> $1 <<<"
+  echo "$1"
+  echo
+  [ "$1" != "" ] && eval "$previous_django_test" "$django_test_options"  && echo ">>> $1 <<<"
 }
 
 #===FUNCTION====================================================================
 # Unset variables when done
 #===============================================================================
 cleanup() {
-  unset class_name class_names clear_options 
+  unset class_name class_names clear_options
   unset dotted_path
   unset file_path file_paths
   unset help help_msg
@@ -238,7 +240,7 @@ cleanup() {
 # 4. Re-rerun previous test, if applicable (possibly override test options)
 # 5. Run test
 #   a) (method): get file paths where method name is found; check for multiple
-#      paths and let user choose; get names of classes; check for multiple 
+#      paths and let user choose; get names of classes; check for multiple
 #      classes, let user choose; make dotted path, collect test options, run test
 #   b) (class): same as a), except the class name is given
 #   c) (module/package): same as a), except the first steps are skipped
@@ -252,76 +254,77 @@ main() {
   handle_options "$@"
 
   if [ "$help" = true ]; then
-    printf "${help_msg}"
+    printf "%s" "$help_msg"
   elif [ "$repeat" = true ]; then
     echo "Running previous test..."
 
     if [ "$clear_options" = true ]; then
-      django_test_options=${@:3}
+        django_test_options="${*:3}"
     fi
 
-    eval $previous_django_test $django_test_options
+    eval "$previous_django_test"  "$django_test_options"
   else
-    target=(${@:1})
+    target=("${@:1}")
     #
     # method
     #
-    if [[ $target =~ test[a-z_0-9]+$ ]]; then
-      method=$(get_first_arg $@)
+    if [[ "$target" =~ test[a-z_0-9]+$ ]]; then
+      method=$(get_first_arg "$@")
 
-      file_paths=($(get_file_paths $method))
+      file_paths=($(get_file_paths "$method"))
 
       if [[ ${#file_paths[@]} -gt 1 ]]; then
-        show_file_paths ${file_paths[@]}
-        read -p $'\nSelect a file path: ' user_choice
+        show_file_paths "${file_paths[@]}"
+        read -rp $'\nSelect a file path: ' user_choice
         file_path="${file_paths[$user_choice - 1]}"
       else
         file_path="${file_paths[0]}"
       fi
 
-      class_names=($(get_class_names $file_path $method))
+      class_names=($(get_class_names "$file_path" "$method"))
 
       if [[ ${#class_names[@]} -gt 1 ]]; then
-        show_class_names ${class_names[@]} $file_path
-        read -p $'\nSelect a test class: ' user_choice
+        show_class_names "${class_names[@]}" "$file_path"
+        read -rp $'\nSelect a test class: ' user_choice
         class_name="${class_names[$user_choice - 1]}"
       else
         class_name="${class_names[0]}"
       fi
 
-      dotted_path=$(make_dotted_path $file_path $class_name $method)
+      dotted_path=$(make_dotted_path "$file_path" "$class_name" "$method")
 
-      django_test_options=${@:2}
+      django_test_options="${*:2}"
     #
     # class
     #
-    elif [[ $target =~ [\'Test\']?[A-Za-z][Test][s]?$ ]] || [[ $target =~ Test[A-Za-zT]+$ ]]; then
-      class_name=$(get_first_arg $@)
+    elif [[ "$target" =~ [\'Test\']?[A-Za-z][Test][s]?$ ]] || [[ "$target" =~ Test[A-Za-zT]+$ ]]; then
+      class_name=$(get_first_arg "$@")
 
-      file_paths=($(get_file_paths $class_name))
+      file_paths=($(get_file_paths "$class_name"))
 
       if [[ ${#file_paths[@]} -gt 1 ]]; then
-        show_file_paths ${file_paths[@]}
-        read -p $'\nSelect a file path: ' user_choice
+        show_file_paths "${file_paths[@]}"
+        read -rp $'\nSelect a file path: ' user_choice
         file_path="${file_paths[$user_choice - 1]}"
       else
         file_path="${file_paths[0]}"
       fi
 
-      dotted_path=$(make_dotted_path $file_path $class_name)
+      dotted_path=$(make_dotted_path "$file_path" "$class_name")
 
-      django_test_options=${@:2}
+      django_test_options="${*:2}"
     #
     # module or package
     #
     else
+      # multiple threads seem to degrade performance
       path=$(fd --threads 1 --type file --type directory | fzf)
 
-      dotted_path=$(make_dotted_path $path)
+      dotted_path=$(make_dotted_path "$path")
 
-      django_test_options=$@
+      django_test_options="$*"
     fi
-    run_test $dotted_path $django_test_options
+    run_test "$dotted_path" "$django_test_options"
   fi
 
   [ "$src_dir" == true ] && cd ..
