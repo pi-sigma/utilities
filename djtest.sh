@@ -25,16 +25,8 @@ Arguments:
 If neither OPTIONS nor method/class are provided, the script starts an interactive
 fuzzy search over the contents of the current working directory (after changing to the
 src/ or app/ directory, if applicable) and execute the tests in the specified module or
-package.
-
-Provide the -r flag to run the previous test together with any Django options specified
-on the last run. In order to run the previous test and override Django options, provide
-the -c flag in addition. For example,
-
-    . djtest.sh -r -c --verbosity=2
-
-will run the previous test with --verbosity=2 and create a new database, even if the
-last run was made with --keepdb.
+package. Provide the -r flag to run the previous test together with any Django options
+specified on the last run.
 "
 
 
@@ -59,11 +51,6 @@ handle_options() {
       ;;
       -r | --repeat)
       repeat=true
-    case $2 in
-      -c | --clear)
-        clear_options=true
-        ;;
-    esac
     esac
     shift
   done
@@ -217,9 +204,6 @@ run_test() {
   [ "$1" != "" ] && eval "$previous_django_test" "$django_test_options"  && echo ">>> $1 <<<"
 }
 
-#===FUNCTION====================================================================
-# Unset variables when done
-#===============================================================================
 cleanup() {
   unset class_name class_names clear_options
   unset dotted_path
@@ -232,6 +216,10 @@ cleanup() {
   unset user_choice
 }
 
+user_interrupt() {
+   cleanup
+   unset repeat clear_options
+}
 
 #===MAIN========================================================================
 # 1. Change to src/ or app/ directory, if applicable
@@ -259,7 +247,7 @@ main() {
     echo "Running previous test..."
 
     if [ "$clear_options" = true ]; then
-        django_test_options="${*:3}"
+        django_test_options=${@:4}
     fi
 
     eval "$previous_django_test"  "$django_test_options"
@@ -330,5 +318,8 @@ main() {
   [ "$src_dir" == true ] && cd ..
   cleanup
 }
+
+trap user_interrupt SIGINT
+trap user_interrupt SIGTSTP
 
 main "$@"
