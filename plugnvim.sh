@@ -2,31 +2,32 @@
 
 # Utility for managing Neovim plugins as git submodules.
 #
-# The script has a simple CRUD-style interface: CREATE local submodules by cloning
-# from GitHub, GitLab, etc., DELETE local submodules by removing the relevant files and
-# clearing Git's cache and index, GET remote submodules by cloning from your own remote,
-# UPDATE local submodules by pulling changes from the origin of each submodule, and PUSH
-# changes to your own remote.
-#
-# The script will automatically update your local Git repository containing the
-# submodules by staging and committing any changes. Pushing the changes to your remote 
-# must be done separately.
+# The script can be called from anywhere and has a simple CRUD-style interface:
+# ADD/CREATE submodules by cloning from GitHub, GitLab, etc., UPDATE by pulling
+# changes from the origin of each remote, GET/READ from your own remote, and DELETE
+# local submodules by removing the relevant files and clearing Git's cache and index.
+# In addition, the script facilitates syncing with your own remote.
 
-help_msg="Usage: plugnvim.sh [OPTIONS] [<repository/file>]
 
-Options:
-    -h, --help      Display this message
-    -c, --create    Create submodule(s)
-    -u, --update    Update submodule(s)
-    -g, --get       Get submodules from remote
-    -d, --delete    Delete submodule
-    -p, --push      Push submodule changes to remote
-    -o, --opt       Install plugins into /opt/
-    -or, -ro        Remove plugin from /opt/
+help_msg="Usage: plugnvim.sh [OPTIONS] [PATH]
 
-Install a single plugin by passing the address of the plugin repository,
-or several plugins by passing the name of a .txt file containing repo
-addresses, (one per line). For example,
+ARGS:
+    <URL>       The address of a plugin repository
+    <FILE>      The path to a file
+
+OPTIONS:
+    -h, --help                  Display this message
+    -a, --add <URL/PATH>        Add submodule(s) at URL or contained in file at PATH
+    -u, --update [URL]          Update plugin with origin at URL; no ARG to update everything
+    -g, --get <URL>             Get submodules from remote plugin repo at URL
+    -d, --delete <URL>          Delete submodule with origin URL
+    -s, --sync                  Sync with remote by pushing changes
+    -r, --restore               Restore state of submodules, discard unstaged changes
+    -o, --opt                   Install plugins into /opt/
+    -or, -ro                    Remove plugin from /opt/
+
+Install a single plugin by passing the address of a repository, or several by
+passing the path to a .txt file containing URLs (one per line). For example,
 
 plugnvim.sh [-a/--add] https://<domain>/<author>/<plugin>
 plugnvim.sh [-a/--add] https://<domain>/<author>/<plugin>/<branch>
@@ -34,9 +35,6 @@ plugnvim.sh [-a/--add] https://<domain>/<author>/<plugin>/<branch>
 will install <plugin> into:
 
 \$Home/.local/share/nvim/site/pack/plugin/start/
-
-Run the script with the -o or --opt flag to install them in ../../plugin/opt/,
-which contains optional plugins that are not automatically loaded on Neovim startup.
 "
 
 
@@ -48,7 +46,7 @@ NVIM_PLUGIN_PATH="$XDG_DATA_HOME/nvim/site/pack/plugins"
 ORIGIN=$PWD
 
 # defaults
-METHOD=CREATE
+METHOD=ADD
 TARGET_DIR=start
 
 
@@ -60,8 +58,8 @@ handle_options() {
                 printf "%s" "$help_msg"
                 exit
                 ;;
-            -c | --create)
-                METHOD=CREATE
+            -a | --add)
+                METHOD=ADD
                 shift
                 ;;
             -d | --delete)
@@ -76,8 +74,12 @@ handle_options() {
                 METHOD=UPDATE
                 shift
                 ;;
-            -p | --push)
-                METHOD=PUSH
+            -s | --sync)
+                METHOD=SYNC
+                shift
+                ;;
+            -r | --restore)
+                METHOD=RESTORE
                 shift
                 ;;
             -o | --opt)
@@ -104,11 +106,11 @@ checkout_nvim_dir() {
     # globals: NVIM_PLUGIN_PATH (str), TARGET_DIR (str)
 
     if [ -d "$NVIM_PLUGIN_PATH" ]; then
-        cd $NVIM_PLUGIN_PATH
+        cd "$NVIM_PLUGIN_PATH" || return
     else
         mkdir -p "$NVIM_PLUGIN_PATH/opt"
         mkdir "$NVIM_PLUGIN_PATH/start"
-        cd $NVIM_PLUGIN_PATH 
+        cd "$NVIM_PLUGIN_PATH"  || return
     fi
 }
 
@@ -117,36 +119,60 @@ install_single_plugin() {
     # args: repo (str)
     # globals: NVIM_PLUGIN_PATH (str), TARGET_DIR (str)
 
-    local repo=$1
-    local plugin=$(echo $repo | cut -d/ -f5-)
+    local repo
+    local plugin
+    local branch
+
+    repo=$1
+    plugin=$(echo "$repo" | cut -d/ -f5-)
 
     # check if particular repo branch is specified
     if [[ $plugin =~ "/tree/" ]]; then
-        local branch=$(echo $plugin | cut -d/ -f3)
-        plugin=$(echo $plugin | cut -d/ -f1)
+        branch=$(echo "$plugin" | cut -d/ -f3)
+        plugin=$(echo "$plugin" | cut -d/ -f1)
         repo=${repo%/*}
         repo=${repo%/*}
-        git submodule add -b $branch -- "$repo" $TARGET_DIR/$plugin
+        git submodule add -b "$branch" -- "$repo" "$TARGET_DIR/$plugin"
     else
-        git submodule add "$repo" $TARGET_DIR/$plugin
+        git submodule add "$repo" "$TARGET_DIR/$plugin"
     fi
 }
+
+update_single_plugin() {
+    # extract plugin name, get target_dir; add submodule to target directory
+    # args: repo (str), target_dir (str, optional, defaults to TARGET_DIR)
+    # globals: NVIM_PLUGIN_PATH (str), TARGET_DIR (str)
+
+    local repo
+    local target_dir
+    local plugin
+
+    repo=$1
+    plugin=$(echo "$repo" | cut -d/ -f5-)
+
+    target_dir=$2
+
+    git submodule update --remote "$target_dir/$plugin"
+}
+
 
 
 #=== main ===============================================================================
 handle_options "$@"
 
+if [[ $# -eq 0 ]]; then
+    printf "%s" "$help_msg"
 #
 # GET
 #
-if [[ $METHOD == "GET" ]]; then
-    mkdir -p "$XDG_DATA_HOME/nvim/site/pack" && cd "$XDG_DATA_HOME/nvim/site/pack"
-    git clone --recursive $POSITIONAL_ARGS plugins
+elif [[ $METHOD == "GET" ]]; then
+    mkdir -p "$XDG_DATA_HOME/nvim/site/pack" && cd "$XDG_DATA_HOME/nvim/site/pack" || return
+    git clone --depth=10 --recursive "$POSITIONAL_ARGS plugins"
     git submodule update --checkout
 #
-# CREATE
+# ADD
 #
-elif [[ $METHOD == "CREATE" ]]; then
+elif [[ $METHOD == "ADD" ]]; then
     checkout_nvim_dir
 
     if [[ ! -d ".git" ]]; then
@@ -157,52 +183,66 @@ elif [[ $METHOD == "CREATE" ]]; then
     if [[ $1 =~ [a-z].txt ]]; then
         repos=$(cat "$ORIGIN/$1")
         for repo in $repos; do
-            install_single_plugin $repo
+            install_single_plugin "$repo"
         done
 
         git submodule init
 
         git add .
-        git commit -m "create submodules from repositories:" -m "${repos[@]}"
+        git commit -m "add submodules from repositories:" -m "${repos[@]}"
     # clone single repo given by argument
-    else
+    elif [[ -n $POSITIONAL_ARGS ]]; then
         repo=$POSITIONAL_ARGS
-        install_single_plugin $repo
+        install_single_plugin "$repo"
 
         git add .
-        git commit -m "create submodule from repository:" -m "$repo"
+        git commit -m "add submodule from repository:" -m "$repo"
+    else
+        printf "%s" "$help_msg"
     fi
 #
 # UPDATE
 #
 elif [[ $METHOD == "UPDATE" ]]; then
     checkout_nvim_dir
-    git submodule update --remote
+
+    if [[ -n $POSITIONAL_ARGS ]]; then
+        update_single_plugin "$POSITIONAL_ARGS" "${3:-$TARGET_DIR}"
+    else
+        git submodule update --remote
+    fi
 
     git_diff=$(git diff --name-status | cut -f2)
     git add .
     git commit -m "update submodules:" -m "$git_diff"
 #
-# PUSH
-#
-elif [[ $METHOD == "PUSH" ]]; then
-    checkout_nvim_dir
-    git push
-#
 # DELETE
 #
-else
+elif [[ $METHOD == "DELETE" ]]; then
     checkout_nvim_dir
 
-    plugin="$(echo $POSITIONAL_ARGS | cut -d/ -f5)"
+    plugin="$(echo "$POSITIONAL_ARGS" | cut -d/ -f5)"
 
     # delete submodule
     rm -r $TARGET_DIR/${plugin%/}
 
-    # remove submodule form index (check for trailing slash)
+    # remove submodule from index (check for trailing slash)
     git config -f .gitmodules --remove-section submodule.$TARGET_DIR/${plugin%/}
     rm -rf .git/modules/$TARGET_DIR/${plugin%/}
 
     git add .
     git commit -m "remove submodule:" -m "$plugin"
+#
+# SYNC
+#
+elif [[ $METHOD == "SYNC" ]]; then
+    checkout_nvim_dir
+    git push
+#
+# RESTORE
+#
+elif [[ $METHOD == "RESTORE" ]]; then
+    checkout_nvim_dir
+    git submodule deinit -f .
+    git submodule update --init
 fi

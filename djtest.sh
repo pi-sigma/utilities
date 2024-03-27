@@ -134,7 +134,7 @@ get_class_names() {
 #   Displays names of classes in which test is found
 #===============================================================================
 show_class_names() {
-    local class_names=( "${@:1:$# - 1}" )
+    local class_names=( ${@:1:$# - 1} )
     local file_path="${!#}"
     local elem
     local ITER
