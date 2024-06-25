@@ -18,15 +18,14 @@ Options:
 
 Arguments:
 [method/class]    Method should follow <test_foo_bar>. Class should be
-<FooBarTest> or <FooBarTests>, although <TestFooBar> and
-<TestsFooBar> are supported as well
+                  <FooBarTest> or <FooBarTests>, although <TestFooBar> and
+                  <TestsFooBar> are supported as well
 [Django options]  --keepd etc. are passed along to the Django test runner
 
 If neither OPTIONS nor method/class are provided, the script starts an interactive
-fuzzy search over the contents of the current working directory (after changing to the
-src/ or app/ directory, if applicable) and execute the tests in the specified module or
-package. Provide the -r flag to run the previous test together with any Django options
-specified on the last run.
+fuzzy search over the contents of the current working directory and execute the tests
+in the specified module or package. Provide the -r flag to run the previous test
+together with any Django options specified on the last run.
 "
 
 
@@ -158,8 +157,8 @@ show_class_names() {
 # Returns:
 #   a dotted path (foo.bar.BazTest.test_example)
 # Details:
-#   Strips extension or traling slash from file_path and replaces '/' with '.'.
-#   Attaches class_name and method, if applicable.
+#   Strips extension or traling slash and 'src' (if applicable) from file_path
+#   and replaces '/' with '.'. Attaches class_name and method (if applicable).
 #===============================================================================
 make_dotted_path() {
     local arg=$1
@@ -172,6 +171,9 @@ make_dotted_path() {
         path=${arg::-1}
     fi
 
+    # strip 'src/' from path if necessary
+    [[ "$1" == *src/* ]] && path=${path:4}
+
     dotted_path=${path//\//.}
     [ "$2" ] && dotted_path+=".$2"
     [ "$3" ] && dotted_path+=".$3"
@@ -181,26 +183,32 @@ make_dotted_path() {
 #===FUNCTION====================================================================
 # Globals:
 #   previous_django_test    (string)
+#   django_test_run         (string)
 #   django_test_options     (string)
 # Arguments:
 #   dotted_path (string)
 # Outputs:
 #   Writes dotted_path to stdout
-# Details:
-#   Saves test command and django test options in env variables for re-running
-#   the script with the -r flag before executing the test
+# Details
+#   Saves test command + object for re-running the
+#   script before executing the test
 #===============================================================================
 run_test() {
-    previous_django_test="python manage.py test $1"
     echo "$1"
     echo
-    [ "$1" != "" ] && eval "$previous_django_test" "$django_test_options"  && echo ">>> $1 <<<"
+
+    previous_django_test=$1
+
+    if [ -d src ]; then
+        django_test_run="python src/manage.py test $1"
+    else
+        django_test_run="python manage.py test $1"
+    fi
+
+    [ "$1" != "" ] && eval "$django_test_run" "$django_test_options"  && echo ">>> $1 <<<"
 }
 
 #===FUNCTION====================================================================
-# Globals: None
-# Arguments: None
-#===============================================================================
 cleanup() {
     unset class_name class_names clear_options
     unset dotted_path
@@ -214,32 +222,19 @@ cleanup() {
 }
 
 #===FUNCTION====================================================================
-# Globals: None
-# Arguments: None
-#===============================================================================
 user_interrupt() {
     cleanup
     unset repeat clear_options
 }
 
 #===MAIN========================================================================
-# 1. Change to src/ or app/ directory, if applicable
-# 2. Handle options and arguments
-# 3. Display help, if applicable
-# 4. Re-rerun previous test, if applicable (possibly override test options)
-# 5. Run test
-#   a) (method): get file paths where method name is found; check for multiple
-#      paths and let user choose; get names of classes; check for multiple
-#      classes, let user choose; make dotted path, collect test options, run test
-#   b) (class): same as a), except the class name is given
-#   c) (module/package): same as a), except the first steps are skipped
-# 6. Change back to $PWD, if applicable
-# 7. Clean up
+# 1.   Handle options and arguments
+# 2.a  Display help
+# 2.b  Re-rerun previous test (possibly override test options)
+# 2.c  Run test (search for class, method, package/module)
+# 3.   Clean up
 #===============================================================================
 main() {
-    [ -d src ] && cd src/ && src_dir=true
-    [ -d app ] && cd app/ && src_dir=true
-
     handle_options "$@"
 
     if [ "$help" = true ]; then
@@ -251,7 +246,7 @@ main() {
             django_test_options=${@:4}
         fi
 
-        eval "$previous_django_test"  "$django_test_options"
+        eval "$django_test_run" "$previous_django_test" "$django_test_options"
     else
         target=("${@:1}")
         #
@@ -283,9 +278,9 @@ main() {
             dotted_path=$(make_dotted_path "$file_path" "$class_name" "$method")
 
             django_test_options="${*:2}"
-            #
-            # class
-            #
+        #
+        # class
+        #
         elif [[ "$target" =~ [\'Test\']?[A-Za-z][Test][s]?$ ]] || [[ "$target" =~ Test[A-Za-zT]+$ ]]; then
             class_name=$(get_first_arg "$@")
 
@@ -302,9 +297,9 @@ main() {
             dotted_path=$(make_dotted_path "$file_path" "$class_name")
 
             django_test_options="${*:2}"
-            #
-            # module or package
-            #
+        #
+        # module or package
+        #
         else
             # multiple threads seem to degrade performance
             path=$(fd --threads 1 --type file --type directory | fzf)
@@ -313,10 +308,10 @@ main() {
 
             django_test_options="$*"
         fi
+
         run_test "$dotted_path" "$django_test_options"
     fi
 
-    [ "$src_dir" == true ] && cd ..
     cleanup
 }
 
